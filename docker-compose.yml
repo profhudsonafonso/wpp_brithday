@@ -1,0 +1,28 @@
+
+services:
+
+  whatsapp-app:
+    build: .
+    container_name: whatsapp_scheduler
+    shm_size: "1gb"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./app:/app
+      - ./sessions:/app/sessions
+      - /app/node_modules
+    depends_on:
+      - mongodb
+  
+     
+
+  mongodb:
+    image: mongo:7
+    container_name: whatsapp_mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+
+volumes:
+  mongo_data:

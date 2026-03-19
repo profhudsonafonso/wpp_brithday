@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>WhatsApp Scheduler</title>
+
+
+//css
+
+<style>
+
+.contact-results{
+border:1px solid #ccc;
+max-height:200px;
+overflow-y:auto;
+background:white;
+position:absolute;
+width:300px;
+z-index:1000;
+}
+
+.contact-item:hover{
+background:#f0f0f0;
+}
+
+.contact-item{
+padding:8px;
+cursor:pointer;
+display:flex;
+align-items:center;
+gap:8px;
+}
+
+.contact-item div{
+display:flex;
+flex-direction:column;
+}
+.contact-item img{
+width:30px;
+height:30px;
+border-radius:50%;
+object-fit:cover;
+}
+
+.avatar{
+width:30px;
+height:30px;
+border-radius:50%;
+background:#25d366;
+color:white;
+display:flex;
+align-items:center;
+justify-content:center;
+font-weight:bold;
+}
+
+</style>
+
+
+</head>
+
+<body>
+
+<h2>Agendar mensagem WhatsApp</h2>
+
+<form id="form">
+
+<label>Buscar contato</label>
+
+<input type="text" id="contactSearch" placeholder="Digite o nome...">
+<label>Contato</label>
+
+<input type="hidden" id="selectedNumber" name="number">
+
+<div id="contactResults" class="contact-results"></div>
+<br><br>
+
+<label>Mensagem:</label>
+<br>
+<textarea id="message" required></textarea>
+<br><br>
+<h3>Gravar áudio</h3>
+
+<button type="button" id="startRecord">
+🎤 Iniciar gravação
+</button>
+
+<button type="button" id="stopRecord">
+⏹ Parar gravação
+</button>
+
+<p id="audioStatus"></p>
+
+<label>Data e hora:</label>
+<br>
+<input type="datetime-local" id="date" required>
+<br><br>
+<label>Imagem:</label>
+<br>
+<input type="file" id="image">
+<br><br>
+<label>Repetir todo ano:</label>
+<input type="checkbox" id="recurring">
+<br><br>
+
+<button type="submit">Agendar</button>
+
+</form>
+
+<p id="result"></p>
+
+<h2>Mensagens agendadas</h2>
+
+<button onclick="loadMessages()">Atualizar lista</button>
+
+<table border="1">
+
+<thead>
+<tr>
+<th>Número</th>
+<th>Mensagem</th>
+<th>Anexos</th>
+<th>Data</th>
+<th>Status</th>
+<th>Ações</th>
+</tr>
+</thead>
+
+<tbody id="tableBody">
+</tbody>
+
+</table>
+
+<script>
+
+document.getElementById("form").addEventListener("submit", async function(e){
+
+e.preventDefault()
+
+const message = document.getElementById("message").value
+const date = document.getElementById("date").value
+const recurring = document.getElementById("recurring").checked
+
+//processamento de audio
+
+let mediaRecorder
+let audioChunks = []
+
+async function startRecording(){
+
+const stream = await navigator.mediaDevices.getUserMedia({
+audio:{
+echoCancellation:true,
+noiseSuppression:true,
+sampleRate:48000
+}
+})
+
+mediaRecorder = new MediaRecorder(stream,{
+mimeType:"audio/webm;codecs=opus"
+})
+
+audioChunks = []
+
+mediaRecorder.ondataavailable = e=>{
+audioChunks.push(e.data)
+}
+
+mediaRecorder.onstop = async ()=>{
+
+const blob = new Blob(audioChunks,{type:"audio/webm"})
+
+const formData = new FormData()
+formData.append("audio",blob,"audio.webm")
+
+const res = await fetch("/upload-audio",{
+method:"POST",
+body:formData
+})
+
+const data = await res.json()
+
+window.recordedAudio = data.path
+
+console.log("Áudio salvo:",data.path)
+
+}
+
+mediaRecorder.start()
+
+}
+
+function stopRecording(){
+mediaRecorder.stop()
+}
+
+const formData = new FormData()
+
+const number = document.getElementById("selectedNumber").value
+if(!number){
+alert("Selecione um contato da lista")
+return
+}formData.append("number", number)
+formData.append("message", message)
+formData.append("sendDate", date)
+formData.append("recurring", recurring)
+
+const fileInput = document.getElementById("image")
+
+if(fileInput.files.length > 0){
+formData.append("image", fileInput.files[0])
+}
+
+if(window.recordedAudio){
+formData.append("audio", window.recordedAudio)
+}
+
+
+const response = await fetch("/schedule",{
+method:"POST",
+body:formData
+})
+
+document.getElementById("result").innerText = await response.text()
+
+loadMessages()
+
+})
+
+async function loadMessages(){
+
+const response = await fetch("/messages")
+
+const messages = await response.json()
+
+const table = document.getElementById("tableBody")
+
+table.innerHTML = ""
+
+messages.forEach(msg => {
+
+const row = `
+<tr>
+<td>${msg.number}</td>
+<td>${msg.message}</td>
+
+<td>
+${msg.image ? "🖼 imagem" : ""}
+${msg.audio ? "🎤 áudio" : ""}
+</td>
+
+<td>${new Date(msg.sendDate).toLocaleString()}</td>
+<td>${msg.sent ? "Enviada" : "Pendente"}</td>
+
+<td>
+<button onclick="deleteMessage('${msg._id}')">
+Excluir
+</button>
+</td>
+
+</tr>
+`
+table.innerHTML += row
+
+})
+
+}
+
+let mediaRecorder
+let audioChunks = []
+
+document.getElementById("startRecord").onclick = async () => {
+
+const stream = await navigator.mediaDevices.getUserMedia({
+audio: {
+echoCancellation: true,
+noiseSuppression: true,
+sampleRate: 48000
+}
+})
+mediaRecorder = new MediaRecorder(stream, {
+mimeType: "audio/webm;codecs=opus"
+})
+
+mediaRecorder.start()
+
+audioChunks = []
+
+mediaRecorder.ondataavailable = e => {
+audioChunks.push(e.data)
+}
+
+document.getElementById("audioStatus").innerText = "Gravando..."
+
+}
+
+document.getElementById("stopRecord").onclick = async () => {
+
+mediaRecorder.stop()
+
+mediaRecorder.onstop = async () => {
+
+const blob = new Blob(audioChunks, {type:'audio/webm'})
+
+const formData = new FormData()
+
+formData.append("audio", blob, "record.webm")
+
+const response = await fetch("/upload-audio",{
+method:"POST",
+body:formData
+})
+
+const data = await response.json()
+
+window.recordedAudio = data.audioPath
+
+document.getElementById("audioStatus").innerText = "Áudio gravado!"
+
+}
+
+}
+
+
+
+// lista de contatos
+let allContacts = []
+
+// carregar contatos do servidor
+async function loadContacts(){
+
+const res = await fetch("/contacts")
+allContacts = await res.json()
+
+}
+
+loadContacts()
+
+// autocomplete
+const searchInput = document.getElementById("contactSearch")
+const resultsDiv = document.getElementById("contactResults")
+
+searchInput.addEventListener("input", function(){
+
+const text = this.value.toLowerCase()
+
+resultsDiv.innerHTML = ""
+
+if(text.length < 2) return
+
+const filtered = allContacts.filter(c =>
+c.name.toLowerCase().includes(text)
+)
+
+filtered.slice(0,10).forEach(c => {
+
+const div = document.createElement("div")
+
+div.className = "contact-item"
+
+div.innerHTML = `
+${c.photo
+? `<img src="${c.photo}">`
+: `<div class="avatar">${c.name.charAt(0)}</div>`
+}
+<div>
+<div>${c.name}</div>
+<div style="font-size:12px;color:gray">${c.number}</div>
+</div>
+`
+div.onclick = () => {
+
+searchInput.value = c.name
+document.getElementById("selectedNumber").value = c.number
+
+resultsDiv.innerHTML = ""
+
+}
+
+resultsDiv.appendChild(div)
+
+})
+
+})
+
+loadMessages()
+
+
+
+</script>
+
+
+</body>
+
+</html>
