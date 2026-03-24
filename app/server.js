@@ -1,3 +1,11 @@
+process.on("uncaughtException", (err) => {
+  console.log("Erro não tratado:", err.message)
+})
+
+process.on("unhandledRejection", (err) => {
+  console.log("Promise rejeitada:", err)
+})
+
 const { createSession, getSession } = require("./whatsappManager")
 const ffmpeg = require("fluent-ffmpeg")
 const path = require("path")
@@ -5,6 +13,7 @@ const express = require("express")
 const mongoose = require("mongoose")
 const { MessageMedia } = require("whatsapp-web.js")
 const multer = require("multer")
+const qrcode = require("qrcode-terminal")
 
 const Message = require("./models/Message")
 
@@ -14,16 +23,28 @@ app.use(express.json())
 app.use(express.static("public"))
 
 /* ==============================
-   UPLOAD IMAGEM
+   UPLOAD (IMAGEM + AUDIO)
 ================================ */
 
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, "uploads/"),
-  filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
+  destination: (req, file, cb) => {
+
+    if(file.fieldname === "audio"){
+      cb(null, "audios/")
+    } else {
+      cb(null, "uploads/")
+    }
+
+  },
+  filename: (req, file, cb) => {
+    cb(null, Date.now() + path.extname(file.originalname))
+  }
 })
 
 const upload = multer({ storage })
+
 app.use("/uploads", express.static("uploads"))
+app.use("/audios", express.static("audios"))
 
 /* ==============================
    MONGODB
@@ -75,54 +96,107 @@ function convertAudio(inputPath){
 
   return new Promise((resolve,reject)=>{
 
-    const outputPath = inputPath.replace(".webm",".ogg")
+    const tempWav = inputPath + ".wav"
+    const outputPath = inputPath + ".ogg"
 
+    // 🔥 PASSO 1: m4a → wav (normaliza)
     ffmpeg(inputPath)
-    .audioCodec("libopus")
-    .audioBitrate("64k")
-    .audioChannels(1)
-    .audioFrequency(48000)
-    .format("ogg")
-    .on("end",()=> resolve(outputPath))
-    .on("error",(err)=> reject(err))
-    .save(outputPath)
+      .audioChannels(1)
+      .audioFrequency(48000)
+      .format("wav")
+      .on("end",()=>{
+
+        console.log("Convertido para WAV")
+
+        // 🔥 PASSO 2: wav → ogg (voice)
+        ffmpeg(tempWav)
+          .audioCodec("libopus")
+          .audioBitrate("64k")
+          .audioChannels(1)
+          .audioFrequency(48000)
+          .format("ogg")
+          .on("end",()=>{
+            console.log("Áudio final:", outputPath)
+            resolve(outputPath)
+          })
+          .on("error",(err)=>{
+            console.log("Erro etapa 2:", err)
+            reject(err)
+          })
+          .save(outputPath)
+
+      })
+      .on("error",(err)=>{
+        console.log("Erro etapa 1:", err)
+        reject(err)
+      })
+      .save(tempWav)
 
   })
 
 }
-
 /* ==============================
-   AGENDAR MENSAGEM
+   AGENDAR MENSAGEM (FIXED)
 ================================ */
 
-app.post("/schedule", upload.single("image"), async (req, res) => {
+app.post("/schedule", upload.fields([
+  { name: "image", maxCount: 1 },
+  { name: "audio", maxCount: 1 }
+]), async (req, res) => {
 
-  const { userId, number, message, sendDate, recurring, audio } = req.body
+  try{
 
-  let imagePath = null
+    const userId = req.body.userId || "user1"
+    const number = req.body.number
+    const message = req.body.message
+    const sendDateRaw = req.body.sendDate
+    const recurring = req.body.recurring
 
-  if(req.file){
-    imagePath = req.file.path
+    let imagePath = null
+    let audioPath = null
+
+    if(req.files?.image){
+      imagePath = req.files.image[0].path
+    }
+
+    if(req.files?.audio){
+      audioPath = req.files.audio[0].path
+    }
+
+    const formattedNumber = number.replace(/\D/g,'') + "@c.us"
+
+    const sendDate = new Date(sendDateRaw)
+
+    console.log("📅 Recebido:", sendDateRaw)
+    console.log("📅 Convertido:", sendDate)
+    console.log("🕒 Agora:", new Date())
+
+    // 🔥 PROTEÇÃO: não permite enviar no passado
+    if(sendDate <= new Date()){
+      return res.status(400).send("Data deve ser futura")
+    }
+
+    const newMessage = new Message({
+      userId,
+      number: formattedNumber,
+      message,
+      sendDate,
+      recurring,
+      image: imagePath,
+      audio: audioPath,
+      sent: false
+    })
+
+    await newMessage.save()
+
+    res.send("Mensagem agendada!")
+
+  }catch(err){
+    console.log("Erro no schedule:", err)
+    res.status(500).send("Erro ao agendar")
   }
 
-  const formattedNumber = number.replace(/\D/g,'') + "@c.us"
-
-  const newMessage = new Message({
-    userId,
-    number: formattedNumber,
-    message,
-    sendDate,
-    recurring,
-    image: imagePath,
-    audio
-  })
-
-  await newMessage.save()
-
-  res.send("Mensagem agendada!")
-
 })
-
 /* ==============================
    SCHEDULER
 ================================ */
@@ -135,7 +209,9 @@ setInterval(async ()=>{
       sent:false,
       sendDate:{$lte:new Date()}
     })
-
+    console.log("Buscando mensagens...")
+    console.log("Encontradas:", messages.length)
+    
     for(let msg of messages){
 
       const client = getSession(msg.userId)
@@ -147,6 +223,28 @@ setInterval(async ()=>{
 
       try{
 
+        // 🔥 1. ENVIA TEXTO PRIMEIRO (SE EXISTIR)
+        
+        const now = new Date()
+
+        // margem de segurança de 1 minuto
+        if(msg.sendDate.getTime() < now.getTime() - 60000){
+          return res.status(400).send("Data inválida (passado)")
+        }
+        if(msg.message){
+          await client.sendMessage(msg.number, msg.message)
+        }
+
+        // 🔥 2. ENVIA IMAGEM
+        if(msg.image){
+          const media = MessageMedia.fromFilePath(msg.image)
+
+          await client.sendMessage(msg.number, media, {
+            caption: msg.message || ""
+          })
+        }
+
+        // 🔥 3. ENVIA ÁUDIO
         if(msg.audio){
 
           const convertedAudio = await convertAudio(msg.audio)
@@ -154,25 +252,9 @@ setInterval(async ()=>{
           const media = MessageMedia.fromFilePath(convertedAudio)
 
           await client.sendMessage(msg.number, media, {
-            sendAudioAsVoice: true
-          })
-
-        }
-        else if(msg.image){
-
-          const media = MessageMedia.fromFilePath(msg.image)
-
-          await client.sendMessage(msg.number, media, {
-            caption: msg.message
-          })
-
-        }
-        else{
-
-          await client.sendMessage(msg.number, msg.message)
-
-        }
-
+          sendAudioAsVoice: true
+        })
+}
         if(msg.recurring){
 
           const nextYear = new Date(msg.sendDate)
@@ -188,7 +270,7 @@ setInterval(async ()=>{
         await msg.save()
 
         console.log("Mensagem enviada para:", msg.number)
-
+        
       }catch(err){
         console.log("Erro ao enviar:", err)
       }
@@ -218,30 +300,7 @@ app.get("/messages", async (req, res) => {
 })
 
 /* ==============================
-   UPLOAD AUDIO
-================================ */
-
-const audioStorage = multer.diskStorage({
-  destination: (req, file, cb) => cb(null, "audios/"),
-  filename: (req, file, cb) => cb(null, Date.now() + path.extname(file.originalname))
-})
-
-const uploadAudio = multer({ storage: audioStorage })
-
-app.post("/upload-audio", uploadAudio.single("audio"), (req, res) => {
-
-  if(!req.file){
-    return res.send("Nenhum áudio enviado")
-  }
-
-  res.json({
-    audioPath: req.file.path
-  })
-
-})
-
-/* ==============================
-   CONTATOS (MULTI-SESSÃO)
+   CONTATOS
 ================================ */
 
 app.get("/contacts/:sessionId", async (req, res) => {
@@ -286,6 +345,52 @@ app.get("/contacts/:sessionId", async (req, res) => {
 })
 
 /* ==============================
+   BUSCA CONTATOS
+================================ */
+
+app.get("/contacts/search/:sessionId", async (req, res) => {
+
+  try{
+
+    const { sessionId } = req.params
+    const q = (req.query.q || "").toLowerCase()
+
+    const client = getSession(sessionId)
+
+    if(!client){
+      return res.status(400).send("Sessão não encontrada")
+    }
+
+    const contacts = await client.getContacts()
+
+    const filtered = contacts
+      .filter(c => {
+        const name = (c.pushname || c.name || "").toLowerCase()
+        const number = c.number || ""
+
+        return (
+          c.isUser &&
+          c.id.server === "c.us" &&
+          (name.includes(q) || number.includes(q))
+        )
+      })
+      .slice(0, 20)
+
+    const result = filtered.map(c => ({
+      name: c.pushname || c.name || c.number,
+      number: c.number
+    }))
+
+    res.json(result)
+
+  }catch(err){
+    console.log(err)
+    res.status(500).send("Erro na busca")
+  }
+
+})
+
+/* ==============================
    CONECTAR WHATSAPP
 ================================ */
 
@@ -295,29 +400,11 @@ app.get("/connect/:sessionId", async (req,res)=>{
 
   const client = await createSession(sessionId)
 
- client.on("qr", qr=>{
-  console.log("QR RECEIVED")
-  qrcode.generate(qr, { small: true })
-})
-  res.send("Sessão criada")
-
-
-const qrcode = require("qrcode-terminal") // garantir que está no topo
-
-app.get("/connect/:sessionId", async (req,res)=>{
-
-  const sessionId = req.params.sessionId
-
-  const client = await createSession(sessionId)
-
   client.on("qr", qr=>{
     console.log("QR RECEIVED")
-    qrcode.generate(qr, { small: true }) // 👈 ESSENCIAL
+    qrcode.generate(qr, { small: true })
   })
 
   res.send("Sessão criada")
-
-})
-
 
 })
