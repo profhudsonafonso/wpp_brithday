@@ -5,12 +5,10 @@ import * as ImagePicker from 'expo-image-picker'
 import { Audio } from 'expo-av'
 import * as Google from "expo-auth-session/providers/google"
 import * as WebBrowser from "expo-web-browser"
-import * as AuthSession from "expo-auth-session"
-
-console.log(
-  AuthSession.makeRedirectUri({ useProxy: true })
-);
 WebBrowser.maybeCompleteAuthSession()
+
+const GOOGLE_WEB_CLIENT_ID = "427937023893-h6lvg7p211apq1d2r5k402ca3euu27k2.apps.googleusercontent.com"
+const GOOGLE_ANDROID_CLIENT_ID = "427937023893-qc53u5s5i49g5ijgmr6t58k0se9ndb4m.apps.googleusercontent.com"
 
 export default function App(){
 
@@ -28,33 +26,59 @@ export default function App(){
   const [image, setImage] = useState<string | null>(null)
   const [recording, setRecording] = useState<Audio.Recording | null>(null)
   const [audio, setAudio] = useState<string | null>(null)
+  const [authToken, setAuthToken] = useState<string | null>(null)
+  const [userId, setUserId] = useState<string | null>(null)
+  const [loginError, setLoginError] = useState<string | null>(null)
+  const [isLoggingIn, setIsLoggingIn] = useState(false)
   //const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-  const redirectUri = AuthSession.makeRedirectUri({
-    useProxy: true,
-  });  
-
-  
   const [request, response, promptAsync] = Google.useAuthRequest({
-    webClientId: "427937023893-h6lvg7p211apq1d2r5k402ca3euu27k2.apps.googleusercontent.com",
-    androidClientId: "427937023893-qc53u5s5i49g5ijgmr6t58k0se9ndb4m.apps.googleusercontent.com",
-    redirectUri,
-    }//,
-    //{
-     // useProxy: true,
-     // projectNameForProxy: "@hudsonafonso1989/wpp-app",
-    //}
-  
-  )
-  
-useEffect(() => {
-  if (response?.type === "success") {
-    const { authentication } = response
+    webClientId: GOOGLE_WEB_CLIENT_ID,
+    androidClientId: GOOGLE_ANDROID_CLIENT_ID,
+  })
 
-    console.log("ID TOKEN:", authentication.idToken)
-    
-  }
-}, [response])
+  useEffect(() => {
+    const loginWithGoogle = async () => {
+      if (response?.type !== "success") {
+        return
+      }
 
+      const idToken = response.authentication?.idToken || response.params.id_token
+
+      if (!idToken) {
+        setLoginError("Google não retornou um token de login")
+        return
+      }
+
+      setIsLoggingIn(true)
+      setLoginError(null)
+
+      try {
+        const res = await fetch(`${API}/google-login`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ token: idToken }),
+        })
+
+        if (!res.ok) {
+          const text = await res.text()
+          throw new Error(text || "Erro no login Google")
+        }
+
+        const data = await res.json()
+        setAuthToken(data.token)
+        setUserId(data.userId)
+      } catch (err) {
+        console.log("Erro no login Google:", err)
+        setLoginError("Não foi possível concluir o login com Google")
+      } finally {
+        setIsLoggingIn(false)
+      }
+    }
+
+    loginWithGoogle()
+  }, [response])
 
   /* ==============================
      BUSCA
@@ -269,10 +293,12 @@ useEffect(() => {
       <Button title="Enviar" onPress={sendMessage}/>
 
       <Button
-        title="Entrar com Google"
-        onPress={() => promptAsync({ useProxy: true })}
-        disabled={!request}
+        title={isLoggingIn ? "Entrando..." : "Entrar com Google"}
+        onPress={() => promptAsync()}
+        disabled={!request || isLoggingIn}
       />
+      {authToken && userId && <Text>Logado com Google</Text>}
+      {loginError && <Text>{loginError}</Text>}
 
       {/* BUSCA */}
       <TextInput style={styles.input} placeholder="Buscar..." value={search} onChangeText={setSearch}/>

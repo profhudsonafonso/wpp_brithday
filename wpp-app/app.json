@@ -6,7 +6,7 @@
     "orientation": "portrait",
     "package": "com.hudson.wppapp",
     "icon": "./assets/images/icon.png",
-    "scheme": "wppapp",
+    "scheme": ["wppapp", "com.hudson.wppapp"],
     "userInterfaceStyle": "automatic",
     "owner": "hudsonafonso1989",
     "newArchEnabled": true,

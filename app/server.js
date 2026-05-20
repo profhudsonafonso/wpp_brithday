@@ -20,7 +20,17 @@ const jwt = require("jsonwebtoken")
 const User = require("./models/User")
 const SECRET = "segredo_super_forte" // depois vamos melhorar isso
 const { OAuth2Client } = require("google-auth-library")
-const client = new OAuth2Client("SEU_CLIENT_ID_GOOGLE")
+const GOOGLE_WEB_CLIENT_ID =
+  process.env.GOOGLE_WEB_CLIENT_ID ||
+  "427937023893-h6lvg7p211apq1d2r5k402ca3euu27k2.apps.googleusercontent.com"
+const GOOGLE_ANDROID_CLIENT_ID =
+  process.env.GOOGLE_ANDROID_CLIENT_ID ||
+  "427937023893-qc53u5s5i49g5ijgmr6t58k0se9ndb4m.apps.googleusercontent.com"
+const googleClient = new OAuth2Client(GOOGLE_WEB_CLIENT_ID)
+const googleClientIds = [
+  GOOGLE_WEB_CLIENT_ID,
+  GOOGLE_ANDROID_CLIENT_ID
+].filter(Boolean)
 
 const app = express()
 
@@ -490,9 +500,13 @@ app.post("/google-login", async (req, res) => {
 
     const { token } = req.body
 
-    const ticket = await client.verifyIdToken({
+    if(!token){
+      return res.status(400).send("Token Google não enviado")
+    }
+
+    const ticket = await googleClient.verifyIdToken({
       idToken: token,
-      audience: "SEU_CLIENT_ID_GOOGLE"
+      audience: googleClientIds
     })
 
     const payload = ticket.getPayload()
