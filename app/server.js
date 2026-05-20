@@ -14,8 +14,13 @@ const mongoose = require("mongoose")
 const { MessageMedia } = require("whatsapp-web.js")
 const multer = require("multer")
 const qrcode = require("qrcode-terminal")
-
 const Message = require("./models/Message")
+const bcrypt = require("bcryptjs")
+const jwt = require("jsonwebtoken")
+const User = require("./models/User")
+const SECRET = "segredo_super_forte" // depois vamos melhorar isso
+const { OAuth2Client } = require("google-auth-library")
+const client = new OAuth2Client("SEU_CLIENT_ID_GOOGLE")
 
 const app = express()
 
@@ -406,5 +411,120 @@ app.get("/connect/:sessionId", async (req,res)=>{
   })
 
   res.send("Sessão criada")
+
+})
+
+
+// ROTA DE CADASTRO DE USUÁRIO
+
+app.post("/register", async (req, res) => {
+
+  try{
+
+    const { name, email, password } = req.body
+
+    const hashedPassword = await bcrypt.hash(password, 10)
+
+    const user = new User({
+      name,
+      email,
+      password: hashedPassword
+    })
+
+    await user.save()
+
+    res.send("Usuário criado!")
+
+  }catch(err){
+    console.log(err)
+    res.status(500).send("Erro ao cadastrar")
+  }
+
+})
+
+
+//ROTA DE LOGIN
+
+app.post("/login", async (req, res) => {
+
+  try{
+
+    const { email, password } = req.body
+
+    const user = await User.findOne({ email })
+
+    if(!user){
+      return res.status(400).send("Usuário não encontrado")
+    }
+
+    const isValid = await bcrypt.compare(password, user.password)
+
+    if(!isValid){
+      return res.status(400).send("Senha inválida")
+    }
+
+    const token = jwt.sign(
+      { userId: user._id },
+      SECRET,
+      { expiresIn: "7d" }
+    )
+
+    res.json({
+      token,
+      userId: user._id
+    })
+
+  }catch(err){
+    console.log(err)
+    res.status(500).send("Erro no login")
+  }
+
+})
+
+
+// logim GOOGLE 
+
+app.post("/google-login", async (req, res) => {
+
+  try{
+
+    const { token } = req.body
+
+    const ticket = await client.verifyIdToken({
+      idToken: token,
+      audience: "SEU_CLIENT_ID_GOOGLE"
+    })
+
+    const payload = ticket.getPayload()
+
+    const email = payload.email
+    const name = payload.name
+
+    let user = await User.findOne({ email })
+
+    if(!user){
+      user = new User({
+        name,
+        email,
+        password: "google"
+      })
+      await user.save()
+    }
+
+    const jwtToken = jwt.sign(
+      { userId: user._id },
+      SECRET,
+      { expiresIn: "7d" }
+    )
+
+    res.json({
+      token: jwtToken,
+      userId: user._id
+    })
+
+  }catch(err){
+    console.log(err)
+    res.status(500).send("Erro no login Google")
+  }
 
 })

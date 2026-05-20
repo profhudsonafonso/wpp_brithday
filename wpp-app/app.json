@@ -4,12 +4,20 @@
     "slug": "wpp-app",
     "version": "1.0.0",
     "orientation": "portrait",
+    "package": "com.hudson.wppapp",
     "icon": "./assets/images/icon.png",
     "scheme": "wppapp",
     "userInterfaceStyle": "automatic",
+    "owner": "hudsonafonso1989",
     "newArchEnabled": true,
+    "extra": {
+      "eas": {
+        "projectId": "427937023893-h6lvg7p211apq1d2r5k402ca3euu27k2.apps.googleusercontent.com"
+      }
+    },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.anonymous.wppapp"
     },
     "android": {
       "adaptiveIcon": {
@@ -19,7 +27,8 @@
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
       "edgeToEdgeEnabled": true,
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.anonymous.wppapp"
     },
     "web": {
       "output": "static",
@@ -39,7 +48,8 @@
           }
         }
       ],
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      "expo-web-browser"
     ],
     "experiments": {
       "typedRoutes": true,

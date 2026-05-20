@@ -9,7 +9,7 @@ if(sessions[sessionId]) return sessions[sessionId]
 const client = new Client({
   authStrategy: new LocalAuth({
     clientId: sessionId,
-    dataPath: "./sessions"
+    dataPath: "/tmp/sessions"
   }),
 
   webVersionCache: {

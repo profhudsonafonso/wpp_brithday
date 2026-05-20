@@ -3,6 +3,14 @@ import { useState, useEffect } from 'react'
 import DateTimePicker from '@react-native-community/datetimepicker'
 import * as ImagePicker from 'expo-image-picker'
 import { Audio } from 'expo-av'
+import * as Google from "expo-auth-session/providers/google"
+import * as WebBrowser from "expo-web-browser"
+import * as AuthSession from "expo-auth-session"
+
+console.log(
+  AuthSession.makeRedirectUri({ useProxy: true })
+);
+WebBrowser.maybeCompleteAuthSession()
 
 export default function App(){
 
@@ -21,6 +29,31 @@ export default function App(){
   const [recording, setRecording] = useState<Audio.Recording | null>(null)
   const [audio, setAudio] = useState<string | null>(null)
   //const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+  const redirectUri = AuthSession.makeRedirectUri({
+    useProxy: true,
+  });  
+
+  
+  const [request, response, promptAsync] = Google.useAuthRequest({
+    webClientId: "427937023893-h6lvg7p211apq1d2r5k402ca3euu27k2.apps.googleusercontent.com",
+    androidClientId: "427937023893-qc53u5s5i49g5ijgmr6t58k0se9ndb4m.apps.googleusercontent.com",
+    redirectUri,
+    }//,
+    //{
+     // useProxy: true,
+     // projectNameForProxy: "@hudsonafonso1989/wpp-app",
+    //}
+  
+  )
+  
+useEffect(() => {
+  if (response?.type === "success") {
+    const { authentication } = response
+
+    console.log("ID TOKEN:", authentication.idToken)
+    
+  }
+}, [response])
 
 
   /* ==============================
@@ -234,6 +267,12 @@ export default function App(){
       <Text>{recording ? "🔴 Gravando..." : audio ? "✅ Áudio pronto" : ""}</Text>
 
       <Button title="Enviar" onPress={sendMessage}/>
+
+      <Button
+        title="Entrar com Google"
+        onPress={() => promptAsync({ useProxy: true })}
+        disabled={!request}
+      />
 
       {/* BUSCA */}
       <TextInput style={styles.input} placeholder="Buscar..." value={search} onChangeText={setSearch}/>
