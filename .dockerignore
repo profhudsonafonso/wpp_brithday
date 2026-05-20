@@ -1,0 +1,12 @@
+.git
+node_modules/
+app/node_modules/
+wpp-app/node_modules/
+.expo/
+wpp-app/.expo/
+sessions/
+app/sessions/
+app/.sessions/
+uploads/
+audios/
+.env
