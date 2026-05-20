@@ -17,7 +17,7 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.anonymous.wppapp"
+      "bundleIdentifier": "com.hudson.wppapp"
     },
     "android": {
       "adaptiveIcon": {
@@ -28,7 +28,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.wppapp"
+      "package": "com.hudson.wppapp"
     },
     "web": {
       "output": "static",
