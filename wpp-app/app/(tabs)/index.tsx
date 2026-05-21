@@ -1,9 +1,11 @@
-import { View, Text, TextInput, Button, StyleSheet, ScrollView, TouchableOpacity, Image } from 'react-native'
-import { useState, useEffect } from 'react'
+import { View, Text, TextInput, Button, StyleSheet, ScrollView, TouchableOpacity, Image, Linking } from "react-native"
+import { useState, useEffect, useRef, useCallback } from "react"
 import DateTimePicker from '@react-native-community/datetimepicker'
 import * as ImagePicker from 'expo-image-picker'
 import { Audio } from 'expo-av'
 import * as Google from "expo-auth-session/providers/google"
+import * as AuthSession from "expo-auth-session"
+import { useFocusEffect } from "expo-router"
 import * as WebBrowser from "expo-web-browser"
 WebBrowser.maybeCompleteAuthSession()
 
@@ -31,54 +33,147 @@ export default function App(){
   const [loginError, setLoginError] = useState<string | null>(null)
   const [isLoggingIn, setIsLoggingIn] = useState(false)
   //const localDate = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
+  const handledGoogleStates = useRef(new Set<string>())
   const [request, response, promptAsync] = Google.useAuthRequest({
     webClientId: GOOGLE_WEB_CLIENT_ID,
     androidClientId: GOOGLE_ANDROID_CLIENT_ID,
   })
 
   useEffect(() => {
-    const loginWithGoogle = async () => {
-      if (response?.type !== "success") {
+    ;(globalThis as any).googleAuthRequest = request
+      ? { codeVerifier: request.codeVerifier, redirectUri: request.redirectUri }
+      : null
+  }, [request])
+
+  const applyGoogleAuthResult = useCallback(() => {
+    const result = (globalThis as any).googleAuthResult
+
+    if (result?.token && result?.userId) {
+      setAuthToken(result.token)
+      setUserId(result.userId)
+      ;(globalThis as any).googleAuthResult = null
+    }
+  }, [])
+
+  useEffect(() => {
+    applyGoogleAuthResult()
+  }, [applyGoogleAuthResult])
+
+  useFocusEffect(applyGoogleAuthResult)
+
+  const completeGoogleLogin = async (idToken: string) => {
+    setIsLoggingIn(true)
+    setLoginError(null)
+
+    try {
+      const res = await fetch(`${API}/google-login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ token: idToken }),
+      })
+
+      if (!res.ok) {
+        const text = await res.text()
+        throw new Error(text || "Erro no login Google")
+      }
+
+      const data = await res.json()
+      setAuthToken(data.token)
+      setUserId(data.userId)
+    } catch (err) {
+      console.log("Erro no login Google:", err)
+      setLoginError("Não foi possível concluir o login com Google")
+    } finally {
+      setIsLoggingIn(false)
+    }
+  }
+
+  useEffect(() => {
+    if (response?.type !== "success") {
+      return
+    }
+
+    const idToken = response.authentication?.idToken || response.params.id_token
+
+    if (!idToken) {
+      setLoginError("Google não retornou um token de login")
+      return
+    }
+
+    completeGoogleLogin(idToken)
+  }, [response])
+
+  useEffect(() => {
+    const handleGoogleRedirect = async (url: string) => {
+      if (!url.startsWith("wppapp://oauthredirect") && !url.startsWith("com.hudson.wppapp:/oauthredirect")) {
         return
       }
 
-      const idToken = response.authentication?.idToken || response.params.id_token
+      const query = url.includes("?") ? url.split("?")[1] : url.split("#")[1] || ""
+      const params = new URLSearchParams(query)
+      const state = params.get("state") || url
 
-      if (!idToken) {
-        setLoginError("Google não retornou um token de login")
+      if (handledGoogleStates.current.has(state)) {
         return
       }
 
-      setIsLoggingIn(true)
-      setLoginError(null)
+      handledGoogleStates.current.add(state)
+
+      const idToken = params.get("id_token")
+
+      if (idToken) {
+        await completeGoogleLogin(idToken)
+        return
+      }
+
+      const code = params.get("code")
+
+      if (!code) {
+        setLoginError("Google não retornou um código de login")
+        return
+      }
 
       try {
-        const res = await fetch(`${API}/google-login`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ token: idToken }),
-        })
-
-        if (!res.ok) {
-          const text = await res.text()
-          throw new Error(text || "Erro no login Google")
+        if (!request?.codeVerifier) {
+          throw new Error("Code verifier do Google não está disponível")
         }
 
-        const data = await res.json()
-        setAuthToken(data.token)
-        setUserId(data.userId)
+        setIsLoggingIn(true)
+        setLoginError(null)
+
+        const tokenResponse = await AuthSession.exchangeCodeAsync(
+          {
+            clientId: GOOGLE_ANDROID_CLIENT_ID,
+            code,
+            redirectUri: request.redirectUri,
+            extraParams: {
+              code_verifier: request.codeVerifier,
+            },
+          },
+          Google.discovery
+        )
+
+        if (!tokenResponse.idToken) {
+          throw new Error("Google não retornou id_token")
+        }
+
+        await completeGoogleLogin(tokenResponse.idToken)
       } catch (err) {
-        console.log("Erro no login Google:", err)
+        console.log("Erro ao finalizar redirect Google:", err)
         setLoginError("Não foi possível concluir o login com Google")
       } finally {
         setIsLoggingIn(false)
       }
     }
 
-    loginWithGoogle()
-  }, [response])
+    const subscription = Linking.addEventListener("url", ({ url }) => {
+      handleGoogleRedirect(url)
+    })
+
+    return () => subscription.remove()
+  }, [request])
 
   /* ==============================
      BUSCA
@@ -294,7 +389,7 @@ export default function App(){
 
       <Button
         title={isLoggingIn ? "Entrando..." : "Entrar com Google"}
-        onPress={() => promptAsync()}
+        onPress={() => promptAsync({ createTask: false })}
         disabled={!request || isLoggingIn}
       />
       {authToken && userId && <Text>Logado com Google</Text>}
